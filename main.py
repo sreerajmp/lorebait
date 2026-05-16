@@ -24,7 +24,12 @@ async def lifespan(app: FastAPI):
     configure_logging()
     settings.resolved_data_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
-    logging.getLogger(__name__).info("Lorebait backend started")
+    logging.getLogger(__name__).info(
+        "Lorebait backend started with Ollama base_url=%s chat_model=%s embedding_model=%s",
+        settings.ollama_base_url,
+        settings.ollama_model,
+        settings.ollama_embedding_model,
+    )
     yield
 
 

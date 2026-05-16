@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from core.llm import build_chat_model
 from core.vector_store import LanceVectorStore
 from models.persona import Persona
+from models.schemas import ChatHistoryMessage
 
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,43 @@ def format_context(matches: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
-def build_prompt(question: str, persona: Persona, context: str) -> str:
+def format_history(history: list[ChatHistoryMessage] | None) -> str:
+    if not history:
+        return "No previous chat turns were provided."
+
+    lines: list[str] = []
+    for message in history[-8:]:
+        role = "assistant" if message.role == "ai" else message.role
+        content = message.content.strip()
+        if content:
+            lines.append(f"{role}: {content}")
+
+    return "\n".join(lines) if lines else "No previous chat turns were provided."
+
+
+def build_retrieval_query(question: str, history: list[ChatHistoryMessage] | None) -> str:
+    if not history:
+        return question
+
+    recent_user_turns = [
+        message.content.strip()
+        for message in history[-8:]
+        if message.role == "user" and message.content.strip()
+    ][-3:]
+    return "\n".join([*recent_user_turns, question])
+
+
+def build_prompt(question: str, persona: Persona, context: str, history: str) -> str:
     return f"""
 {PERSONA_PROMPTS[persona]}
 
-Use only the context below. If the answer is not supported by the indexed files,
-say that the indexed context does not contain enough information.
+Use the conversation history only to understand follow-up references. Answer the
+latest user question using only the indexed context below. If the answer is not
+supported by the indexed files, say that the indexed context does not contain
+enough information and ask for the right file or folder to be indexed.
+
+Conversation history:
+{history}
 
 Context:
 {context}
@@ -61,18 +93,20 @@ async def stream_persona_answer(
     persona: Persona,
     folder_path: str,
     top_k: int,
+    history: list[ChatHistoryMessage] | None = None,
 ) -> AsyncIterator[str]:
     try:
         vector_store = LanceVectorStore()
         matches = await vector_store.asimilarity_search(
             folder_path=folder_path,
-            query=question,
+            query=build_retrieval_query(question, history),
             limit=top_k,
         )
         prompt = build_prompt(
             question=question,
             persona=persona,
             context=format_context(matches),
+            history=format_history(history),
         )
         llm = build_chat_model()
 
@@ -80,6 +114,12 @@ async def stream_persona_answer(
             content = getattr(chunk, "content", None)
             if content:
                 yield content
-    except Exception:
+    except Exception as exc:
         logger.exception("Chat streaming failed")
+        if "model" in str(exc).lower() and "not found" in str(exc).lower():
+            yield (
+                "\n\nLorebait could not find the configured Ollama chat model. "
+                "Check OLLAMA_MODEL in .env and restart the backend."
+            )
+            return
         yield "\n\nLorebait could not complete this response. Check server logs for details."

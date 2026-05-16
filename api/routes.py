@@ -14,6 +14,7 @@ from models.schemas import (
     ChatRequest,
     IndexRequest,
     IndexResponse,
+    IndexStatusResponse,
     SessionResponse,
     SessionUpdateRequest,
 )
@@ -84,6 +85,38 @@ async def index_directory(
     )
 
 
+@router.get("/index/status", response_model=IndexStatusResponse)
+async def get_index_status(
+    directory_path: str | None = None,
+    db: AsyncSession = Depends(get_session),
+) -> IndexStatusResponse:
+    active_session = await get_or_create_active_session(db)
+    folder_path = directory_path or active_session.active_folder
+    if folder_path is None:
+        return IndexStatusResponse(
+            status="idle",
+            directory_path=None,
+        )
+
+    directory_key = str(Path(folder_path).expanduser().resolve())
+    result = await db.execute(select(IndexedFolder).where(IndexedFolder.path == directory_key))
+    indexed_folder = result.scalar_one_or_none()
+    if indexed_folder is None:
+        return IndexStatusResponse(
+            status="idle",
+            directory_path=directory_key,
+        )
+
+    return IndexStatusResponse(
+        status=indexed_folder.status,
+        directory_path=indexed_folder.path,
+        documents_indexed=indexed_folder.documents_indexed,
+        chunks_indexed=indexed_folder.chunks_indexed,
+        last_error=indexed_folder.last_error,
+        is_indexing=indexed_folder.status in {"queued", "scanning", "tokenizing", "embedding"},
+    )
+
+
 @router.post("/chat")
 async def chat(
     payload: ChatRequest,
@@ -113,6 +146,7 @@ async def chat(
         persona=persona,
         folder_path=str(directory),
         top_k=payload.top_k,
+        history=payload.history,
     )
     return StreamingResponse(stream, media_type="text/plain; charset=utf-8")
 

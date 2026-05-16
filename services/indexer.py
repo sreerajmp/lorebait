@@ -124,7 +124,7 @@ async def run_indexing_job(directory_path: str) -> None:
             indexed_folder = IndexedFolder(path=directory_path)
             db.add(indexed_folder)
 
-        indexed_folder.status = "indexing"
+        indexed_folder.status = "tokenizing"
         indexed_folder.last_error = None
         await db.commit()
 

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 from models.persona import Persona
@@ -25,6 +27,28 @@ class IndexResponse(BaseModel):
     message: str
 
 
+class IndexStatusResponse(BaseModel):
+    status: str
+    directory_path: str | None
+    documents_indexed: int = 0
+    chunks_indexed: int = 0
+    last_error: str | None = None
+    is_indexing: bool = False
+
+
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant", "ai"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("history content cannot be blank")
+        return stripped
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     persona: Persona | None = Field(
@@ -35,7 +59,12 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional folder override. Persists as active folder when supplied.",
     )
-    top_k: int = Field(default=4, ge=1, le=12)
+    top_k: int = Field(default=6, ge=1, le=12)
+    history: list[ChatHistoryMessage] = Field(
+        default_factory=list,
+        max_length=12,
+        description="Recent chat turns used to resolve follow-up questions.",
+    )
 
     @field_validator("message")
     @classmethod

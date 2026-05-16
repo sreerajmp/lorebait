@@ -8,20 +8,11 @@ logger = logging.getLogger(__name__)
 
 def build_embeddings(settings: Settings | None = None):
     settings = settings or get_settings()
-    provider = settings.resolved_embedding_provider
-
-    if provider == "openai":
-        if not settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is required when EMBEDDING_PROVIDER=openai")
-        try:
-            from langchain_openai import OpenAIEmbeddings
-        except ImportError as exc:
-            raise RuntimeError("Install langchain-openai to use OpenAI embeddings") from exc
-
-        return OpenAIEmbeddings(
-            model=settings.openai_embedding_model,
-            api_key=settings.openai_api_key,
-        )
+    logger.info(
+        "Using Ollama embeddings model=%s base_url=%s",
+        settings.ollama_embedding_model,
+        settings.ollama_base_url,
+    )
 
     try:
         from langchain_ollama import OllamaEmbeddings
@@ -39,21 +30,11 @@ def build_embeddings(settings: Settings | None = None):
 
 def build_chat_model(settings: Settings | None = None):
     settings = settings or get_settings()
-
-    if settings.llm_provider == "openai":
-        if not settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError as exc:
-            raise RuntimeError("Install langchain-openai to use OpenAI chat models") from exc
-
-        return ChatOpenAI(
-            model=settings.openai_model,
-            api_key=settings.openai_api_key,
-            temperature=0.2,
-            streaming=True,
-        )
+    logger.info(
+        "Using Ollama chat model=%s base_url=%s",
+        settings.ollama_model,
+        settings.ollama_base_url,
+    )
 
     try:
         from langchain_ollama import ChatOllama

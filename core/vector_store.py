@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import re
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -12,6 +13,78 @@ from core.llm import build_embeddings
 
 
 logger = logging.getLogger(__name__)
+
+WORD_PATTERN = re.compile(r"[a-z0-9][a-z0-9_'-]{1,}", re.IGNORECASE)
+STOP_WORDS = {
+    "about",
+    "after",
+    "again",
+    "also",
+    "answer",
+    "because",
+    "before",
+    "being",
+    "between",
+    "could",
+    "does",
+    "from",
+    "give",
+    "have",
+    "into",
+    "more",
+    "only",
+    "please",
+    "question",
+    "should",
+    "that",
+    "their",
+    "there",
+    "these",
+    "they",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "with",
+    "would",
+    "your",
+}
+
+
+def keyword_terms(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in WORD_PATTERN.findall(text)
+        if len(token) > 2 and token.lower() not in STOP_WORDS
+    }
+
+
+def distance_to_score(distance: Any, fallback_rank: int, total: int) -> float:
+    try:
+        numeric_distance = float(distance)
+    except (TypeError, ValueError):
+        if total <= 1:
+            return 1.0
+        return max(0.0, 1.0 - (fallback_rank / (total - 1)))
+
+    return 1.0 / (1.0 + max(numeric_distance, 0.0))
+
+
+def lexical_score(query_terms: set[str], result: dict[str, Any]) -> float:
+    if not query_terms:
+        return 0.0
+
+    searchable_text = " ".join(
+        str(result.get(field) or "")
+        for field in ("text", "filename", "relative_path")
+    )
+    result_terms = keyword_terms(searchable_text)
+    if not result_terms:
+        return 0.0
+
+    return len(query_terms & result_terms) / len(query_terms)
 
 
 class LanceVectorStore:
@@ -97,11 +170,24 @@ class LanceVectorStore:
         folder_key = self.folder_id(folder_path)
         vector = self._embeddings.embed_query(query)
         max_results = limit or self.settings.retrieval_k
+        candidate_count = min(40, max(max_results * 5, max_results + 8))
 
         results = (
             table.search(vector)
             .where(f"folder_id = '{folder_key}'", prefilter=True)
-            .limit(max_results)
+            .limit(candidate_count)
             .to_list()
         )
-        return [dict(result) for result in results]
+        candidates = [dict(result) for result in results]
+        query_terms = keyword_terms(query)
+
+        for rank, result in enumerate(candidates):
+            vector_score = distance_to_score(result.get("_distance"), rank, len(candidates))
+            text_score = lexical_score(query_terms, result)
+            result["relevance_score"] = (0.72 * vector_score) + (0.28 * text_score)
+
+        return sorted(
+            candidates,
+            key=lambda result: result.get("relevance_score", 0.0),
+            reverse=True,
+        )[:max_results]
